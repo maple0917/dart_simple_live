@@ -5,35 +5,61 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Latest Dev Source
+        uses: actions/checkout@v4
+        with:
+          repository: xiaoyaocz/dart_simple_live
+          ref: dev
+          submodules: true
 
-      - uses: actions/setup-java@v4
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
-          cache: 'gradle'
 
-      - uses: subosito/flutter-action@v2
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.38.x'
+          flutter-version: '3.24.0'
           cache: true
 
-      - name: Generate Keystore
-        run: keytool -genkey -v -keystore /tmp/release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias key -storepass 123456 -keypass 123456 -dname "CN=SL,OU=Dev,O=Dev,L=CN,S=CN,C=CN"
+      - name: Generate Signing Key
+        run: |
+          rm -f /tmp/release.jks
+          keytool -genkey -v -keystore /tmp/release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias key -storepass 123456 -keypass 123456 -dname "CN=SL,OU=Dev,O=Dev,L=CN,S=CN,C=CN"
+          for dir in simple_live_app simple_live_tv_app; do
+            cp /tmp/release.jks $dir/android/app/key.jks
+            cp /tmp/release.jks $dir/android/key.jks
+            printf "storeFile=/tmp/release.jks\nstorePassword=123456\nkeyPassword=123456\nkeyAlias=key\n" > $dir/android/key.properties
+          done
 
-      - name: Configure Mobile Signing
-        run: printf "storeFile=/tmp/release.jks\nstorePassword=123456\nkeyPassword=123456\nkeyAlias=key\n" > simple_live_app/android/key.properties
-
-      - name: Configure TV Signing
-        run: printf "storeFile=/tmp/release.jks\nstorePassword=123456\nkeyPassword=123456\nkeyAlias=key\n" > simple_live_tv_app/android/key.properties
+      - name: Patch auto_orientation_v2 Bug (Fallback)
+        run: |
+          flutter pub cache repair || true
+          find / -name "build.gradle" 2>/dev/null | grep "auto_orientation" | xargs -r sed -i '/namespace/d' || true
 
       - name: Build Mobile APK
         working-directory: ./simple_live_app
-        run: flutter pub get && flutter build apk --release --split-per-abi
+        env:
+          KEY_STORE_FILE: /tmp/release.jks
+          KEY_STORE_PASS: "123456"
+          KEY_ALIAS: key
+          KEY_PASS: "123456"
+        run: |
+          flutter pub get
+          flutter build apk --release --split-per-abi
 
       - name: Build TV APK
         working-directory: ./simple_live_tv_app
-        run: flutter pub get && flutter build apk --release --split-per-abi
+        env:
+          KEY_STORE_FILE: /tmp/release.jks
+          KEY_STORE_PASS: "123456"
+          KEY_ALIAS: key
+          KEY_PASS: "123456"
+        run: |
+          flutter pub get
+          flutter build apk --release --split-per-abi
 
       - name: Upload Mobile APK
         uses: actions/upload-artifact@v4
