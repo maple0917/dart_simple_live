@@ -1,18 +1,20 @@
 name: Build Simple Live APKs
-on: [push, workflow_dispatch]
+
+on:
+  push:
+    branches: [ "master", "dev", "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Latest Dev Source
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          repository: xiaoyaocz/dart_simple_live
-          ref: dev
-          submodules: true
+          submodules: recursive
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
@@ -21,54 +23,34 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          channel: 'stable'
           cache: true
 
-      - name: Generate Signing Key
+      - name: Generate Keystore
         run: |
-          rm -f /tmp/release.jks
           keytool -genkey -v -keystore /tmp/release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias key -storepass 123456 -keypass 123456 -dname "CN=SL,OU=Dev,O=Dev,L=CN,S=CN,C=CN"
           for dir in simple_live_app simple_live_tv_app; do
-            cp /tmp/release.jks $dir/android/app/key.jks
-            cp /tmp/release.jks $dir/android/key.jks
-            printf "storeFile=/tmp/release.jks\nstorePassword=123456\nkeyPassword=123456\nkeyAlias=key\n" > $dir/android/key.properties
+            if [ -d "$dir/android" ]; then
+              printf "storeFile=/tmp/release.jks\nstorePassword=123456\nkeyPassword=123456\nkeyAlias=key\n" > $dir/android/key.properties
+            fi
           done
 
-      - name: Patch auto_orientation_v2 Bug (Fallback)
-        run: |
-          flutter pub cache repair || true
-          find / -name "build.gradle" 2>/dev/null | grep "auto_orientation" | xargs -r sed -i '/namespace/d' || true
-
-      - name: Build Mobile APK
+      - name: Build Mobile App
         working-directory: ./simple_live_app
-        env:
-          KEY_STORE_FILE: /tmp/release.jks
-          KEY_STORE_PASS: "123456"
-          KEY_ALIAS: key
-          KEY_PASS: "123456"
         run: |
           flutter pub get
           flutter build apk --release --split-per-abi
 
-      - name: Build TV APK
+      - name: Build TV App
         working-directory: ./simple_live_tv_app
-        env:
-          KEY_STORE_FILE: /tmp/release.jks
-          KEY_STORE_PASS: "123456"
-          KEY_ALIAS: key
-          KEY_PASS: "123456"
         run: |
           flutter pub get
           flutter build apk --release --split-per-abi
 
-      - name: Upload Mobile APK
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleLive-Mobile-APK
-          path: simple_live_app/build/app/outputs/flutter-apk/*.apk
-
-      - name: Upload TV APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: SimpleLive-TV-APK
-          path: simple_live_tv_app/build/app/outputs/flutter-apk/*.apk
+          name: SimpleLive-All-APKs
+          path: |
+            simple_live_app/build/app/outputs/flutter-apk/*.apk
+            simple_live_tv_app/build/app/outputs/flutter-apk/*.apk
