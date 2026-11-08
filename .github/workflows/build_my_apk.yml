@@ -38,32 +38,38 @@ jobs:
           flutter-version: "3.38.x"
           cache: false
 
-      - name: Network Mirrors and Dependency Hardening
+      - name: Network Mirrors and AGP 8 Namespace Fix
         run: |
-          # 1. 替换 Gradle 下载源为阿里云镜像，防止 504
+          # 1. 将 Gradle 下载源更换为镜像源，避免网络超时
           sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.12-all.zip#g' simple_live_app/android/gradle/wrapper/gradle-wrapper.properties
           sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.11-all.zip#g' simple_live_tv_app/android/gradle/wrapper/gradle-wrapper.properties
-
-          # 2. 将 gradlePluginPortal 替换为 mavenCentral 以切断重定向到 github 的风险
+          
+          # 2. 替换可能引起重定向的仓库源
           find simple_live_app/android simple_live_tv_app/android "$FLUTTER_ROOT" -name "*.gradle*" -type f -exec sed -i 's/gradlePluginPortal()/mavenCentral()\n        google()/g' {} + || true
 
-          # 3. 配置 Gradle 全局重试与超时参数
-          mkdir -p ~/.gradle
-          echo "org.gradle.internal.http.connectionTimeout=120000" >> ~/.gradle/gradle.properties
-          echo "org.gradle.internal.http.socketTimeout=120000" >> ~/.gradle/gradle.properties
-          echo "systemProp.org.gradle.internal.repository.max.tentatives=5" >> ~/.gradle/gradle.properties
+          # 3. 【核心根治】向手机端与TV端的 android/build.gradle 注入 AGP 8 全局命名空间自动补全脚本，彻底解决老旧插件 NullPointerException
+          for build_file in simple_live_app/android/build.gradle simple_live_tv_app/android/build.gradle; do
+            if [ -f "$build_file" ]; then
+              echo "" >> "$build_file"
+              echo "subprojects {" >> "$build_file"
+              echo "    afterEvaluate { project ->" >> "$build_file"
+              echo "        if (project.hasProperty('android')) {" >> "$build_file"
+              echo "            project.android {" >> "$build_file"
+              echo "                if (namespace == null) {" >> "$build_file"
+              echo "                    namespace project.group" >> "$build_file"
+              echo "                }" >> "$build_file"
+              echo "            }" >> "$build_file"
+              echo "        }" >> "$build_file"
+              echo "    }" >> "$build_file"
+              echo "}" >> "$build_file"
+            fi
+          done
 
       - name: Build Mobile APK
         run: |
           cd simple_live_app
           flutter pub get
-          
-          # 彻底清洗第三方 pub 插件中所有可能导致编译崩溃的废弃 kotlin{} 块
-          find ~/.pub-cache -path "*/android/build.gradle" -exec sed -i '/kotlin {/,/}/d' {} + || true
-          
-          # 执行编译，自带一次失败自动重试机制
-          flutter build apk --release --split-per-abi || flutter build apk --release --split-per-abi
-          
+          flutter build apk --release --split-per-abi
           mkdir -p $RUNNER_TEMP/apks
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk $RUNNER_TEMP/apks/SimpleLive-Mobile-arm64-v8a.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk $RUNNER_TEMP/apks/SimpleLive-Mobile-armeabi-v7a.apk
@@ -72,12 +78,7 @@ jobs:
         run: |
           cd simple_live_tv_app
           flutter pub get
-          
-          # 彻底清洗 TV 端第三方插件中所有可能导致编译崩溃的废弃 block
-          find ~/.pub-cache -path "*/android/build.gradle" -exec sed -i '/kotlin {/,/}/d' {} + || true
-          
-          flutter build apk --release --split-per-abi || flutter build apk --release --split-per-abi
-          
+          flutter build apk --release --split-per-abi
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk $RUNNER_TEMP/apks/SimpleLive-TV-arm64-v8a.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk $RUNNER_TEMP/apks/SimpleLive-TV-armeabi-v7a.apk
 
