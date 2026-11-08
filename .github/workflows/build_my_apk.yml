@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-mobile:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,15 +31,46 @@ jobs:
           flutter-version: "3.38.x"
           cache: true
 
-      - name: Restore packages
+      - name: Bypass GitHub 504 for Gradle and Kotlin
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat << 'EOF' > ~/.gradle/init.d/mirror.gradle
+          settingsEvaluated { settings ->
+              settings.pluginManagement {
+                  repositories {
+                      clear()
+                      maven { url "https://maven.aliyun.com/repository/central" }
+                      maven { url "https://maven.aliyun.com/repository/gradle-plugin" }
+                      maven { url "https://maven.aliyun.com/repository/google" }
+                      mavenCentral()
+                      google()
+                      gradlePluginPortal()
+                  }
+              }
+          }
+          allprojects {
+              buildscript {
+                  repositories {
+                      maven { url "https://maven.aliyun.com/repository/central" }
+                      maven { url "https://maven.aliyun.com/repository/google" }
+                      mavenCentral()
+                      google()
+                  }
+              }
+              repositories {
+                  maven { url "https://maven.aliyun.com/repository/central" }
+                  maven { url "https://maven.aliyun.com/repository/google" }
+                  mavenCentral()
+                  google()
+              }
+          }
+          EOF
+          sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.12-all.zip#g' simple_live_app/android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Restore packages and Build APK
         run: |
           cd simple_live_app
           flutter pub get
-
-      - name: Build APK
-        run: |
-          cd simple_live_app
-          sed -i '' 's#https\\://github.com/gradle/gradle-distributions/releases/download/v8.12.0/gradle-8.12-all.zip#https\\://services.gradle.org/distributions/gradle-8.12-all.zip#g' android/gradle/wrapper/gradle-wrapper.properties || true
           flutter build apk --release --split-per-abi
 
       - name: Upload APK to Artifacts
@@ -52,7 +83,7 @@ jobs:
             simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
 
   build-tv:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,15 +108,46 @@ jobs:
           flutter-version: "3.38.x"
           cache: true
 
-      - name: Restore packages
+      - name: Bypass GitHub 504 for Gradle and Kotlin
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat << 'EOF' > ~/.gradle/init.d/mirror.gradle
+          settingsEvaluated { settings ->
+              settings.pluginManagement {
+                  repositories {
+                      clear()
+                      maven { url "https://maven.aliyun.com/repository/central" }
+                      maven { url "https://maven.aliyun.com/repository/gradle-plugin" }
+                      maven { url "https://maven.aliyun.com/repository/google" }
+                      mavenCentral()
+                      google()
+                      gradlePluginPortal()
+                  }
+              }
+          }
+          allprojects {
+              buildscript {
+                  repositories {
+                      maven { url "https://maven.aliyun.com/repository/central" }
+                      maven { url "https://maven.aliyun.com/repository/google" }
+                      mavenCentral()
+                      google()
+                  }
+              }
+              repositories {
+                  maven { url "https://maven.aliyun.com/repository/central" }
+                  maven { url "https://maven.aliyun.com/repository/google" }
+                  mavenCentral()
+                  google()
+              }
+          }
+          EOF
+          sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.11-all.zip#g' simple_live_tv_app/android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Restore packages and Build APK
         run: |
           cd simple_live_tv_app
           flutter pub get
-
-      - name: Build APK
-        run: |
-          cd simple_live_tv_app
-          sed -i '' 's#https\\://github.com/gradle/gradle-distributions/releases/download/v8.12.0/gradle-8.12-all.zip#https\\://services.gradle.org/distributions/gradle-8.12-all.zip#g' android/gradle/wrapper/gradle-wrapper.properties || true
           flutter build apk --release --split-per-abi
 
       - name: Upload APK to Artifacts
