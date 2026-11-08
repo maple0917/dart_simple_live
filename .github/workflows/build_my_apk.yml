@@ -4,157 +4,93 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build-mobile:
+  build-and-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # 1. 检出官方 master 分支代码
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
           ref: master
 
-      - name: Generate Android keystore and key.properties
+      # 2. 自动生成签名证书（替代官方私有的 Secrets 密钥）
+      - name: Create Keystore and key.properties
         run: |
           keytool -genkey -v -keystore $RUNNER_TEMP/keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias key -storepass 123456 -keypass 123456 -dname "CN=SL,OU=Dev,O=Dev,L=CN,S=CN,C=CN"
-          echo "storeFile=$RUNNER_TEMP/keystore.jks" > simple_live_app/android/key.properties
-          echo "storePassword=123456" >> simple_live_app/android/key.properties
-          echo "keyPassword=123456" >> simple_live_app/android/key.properties
-          echo "keyAlias=key" >> simple_live_app/android/key.properties
+          for dir in simple_live_app simple_live_tv_app; do
+            echo "storeFile=$RUNNER_TEMP/keystore.jks" > $dir/android/key.properties
+            echo "storePassword=123456" >> $dir/android/key.properties
+            echo "keyPassword=123456" >> $dir/android/key.properties
+            echo "keyAlias=key" >> $dir/android/key.properties
+          done
 
-      - uses: actions/setup-java@v4
+      # 3. 配置 Java 17 环境
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: "zulu"
           java-version: "17"
 
-      - name: Flutter action
+      # 4. 配置官方指定的 Flutter 3.38.x
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.38.x"
-          cache: true
+          cache: false
 
-      - name: Bypass GitHub 504 for Gradle and Kotlin
+      # 5. 【核心根治】彻底切断所有指向 github.com 的 504 链接
+      - name: Eliminate GitHub 504 Redirects
         run: |
-          mkdir -p ~/.gradle/init.d
-          cat << 'EOF' > ~/.gradle/init.d/mirror.gradle
-          settingsEvaluated { settings ->
-              settings.pluginManagement {
-                  repositories {
-                      clear()
-                      maven { url "https://maven.aliyun.com/repository/central" }
-                      maven { url "https://maven.aliyun.com/repository/gradle-plugin" }
-                      maven { url "https://maven.aliyun.com/repository/google" }
-                      mavenCentral()
-                      google()
-                      gradlePluginPortal()
-                  }
-              }
-          }
-          allprojects {
-              buildscript {
-                  repositories {
-                      maven { url "https://maven.aliyun.com/repository/central" }
-                      maven { url "https://maven.aliyun.com/repository/google" }
-                      mavenCentral()
-                      google()
-                  }
-              }
-              repositories {
-                  maven { url "https://maven.aliyun.com/repository/central" }
-                  maven { url "https://maven.aliyun.com/repository/google" }
-                  mavenCentral()
-                  google()
-              }
-          }
-          EOF
-          sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.12-all.zip#g' simple_live_app/android/gradle/wrapper/gradle-wrapper.properties
+          # (1) 将 Gradle 下载地址改为阿里云美国/全球加速源，开启底层网络自动重试，绝不访问 github.com
+          sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.12-all.zip#g' simple_live_app/android/gradle/wrapper/gradle-wrapper.properties
+          sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.11-all.zip#g' simple_live_tv_app/android/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Restore packages and Build APK
+          # (2) 禁用会 302 跳转回 github.com 的 gradlePluginPortal()，改为直接走美国 Maven Central 主干网拉取 Kotlin 编译器
+          find simple_live_app/android simple_live_tv_app/android "$FLUTTER_ROOT" -name "*.gradle*" -type f -exec sed -i 's/gradlePluginPortal()/mavenCentral()\n        google()/g' {} + || true
+
+          # (3) 配置 Gradle 全局网络超时与重试参数，防止任何偶发网络波动
+          mkdir -p ~/.gradle
+          echo "org.gradle.internal.http.connectionTimeout=120000" >> ~/.gradle/gradle.properties
+          echo "org.gradle.internal.http.socketTimeout=120000" >> ~/.gradle/gradle.properties
+          echo "systemProp.org.gradle.internal.repository.max.tentatives=5" >> ~/.gradle/gradle.properties
+
+      # 6. 编译手机版 APK（自带网络波动自动重试机制）
+      - name: Build Mobile APK
         run: |
           cd simple_live_app
           flutter pub get
-          flutter build apk --release --split-per-abi
+          flutter build apk --release --split-per-abi || flutter build apk --release --split-per-abi
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk $RUNNER_TEMP/SimpleLive-Mobile-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk $RUNNER_TEMP/SimpleLive-Mobile-armeabi-v7a.apk
 
-      - name: Upload APK to Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: android
-          path: |
-            simple_live_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-            simple_live_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-            simple_live_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
-
-  build-tv:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: master
-
-      - name: Generate TV keystore and key.properties
-        run: |
-          keytool -genkey -v -keystore $RUNNER_TEMP/tv_keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias key -storepass 123456 -keypass 123456 -dname "CN=SL,OU=Dev,O=Dev,L=CN,S=CN,C=CN"
-          echo "storeFile=$RUNNER_TEMP/tv_keystore.jks" > simple_live_tv_app/android/key.properties
-          echo "storePassword=123456" >> simple_live_tv_app/android/key.properties
-          echo "keyPassword=123456" >> simple_live_tv_app/android/key.properties
-          echo "keyAlias=key" >> simple_live_tv_app/android/key.properties
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: "zulu"
-          java-version: "17"
-
-      - name: Flutter action
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.38.x"
-          cache: true
-
-      - name: Bypass GitHub 504 for Gradle and Kotlin
-        run: |
-          mkdir -p ~/.gradle/init.d
-          cat << 'EOF' > ~/.gradle/init.d/mirror.gradle
-          settingsEvaluated { settings ->
-              settings.pluginManagement {
-                  repositories {
-                      clear()
-                      maven { url "https://maven.aliyun.com/repository/central" }
-                      maven { url "https://maven.aliyun.com/repository/gradle-plugin" }
-                      maven { url "https://maven.aliyun.com/repository/google" }
-                      mavenCentral()
-                      google()
-                      gradlePluginPortal()
-                  }
-              }
-          }
-          allprojects {
-              buildscript {
-                  repositories {
-                      maven { url "https://maven.aliyun.com/repository/central" }
-                      maven { url "https://maven.aliyun.com/repository/google" }
-                      mavenCentral()
-                      google()
-                  }
-              }
-              repositories {
-                  maven { url "https://maven.aliyun.com/repository/central" }
-                  maven { url "https://maven.aliyun.com/repository/google" }
-                  mavenCentral()
-                  google()
-              }
-          }
-          EOF
-          sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.11-all.zip#g' simple_live_tv_app/android/gradle/wrapper/gradle-wrapper.properties
-
-      - name: Restore packages and Build APK
+      # 7. 编译电视版 TV APK（自带网络波动自动重试机制）
+      - name: Build TV APK
         run: |
           cd simple_live_tv_app
           flutter pub get
-          flutter build apk --release --split-per-abi
+          flutter build apk --release --split-per-abi || flutter build apk --release --split-per-abi
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk $RUNNER_TEMP/SimpleLive-TV-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk $RUNNER_TEMP/SimpleLive-TV-armeabi-v7a.apk
 
-      - name: Upload APK to Artifacts
-        uses: actions/upload-artifact@v4
+      # 8. 自动创建版本并发布到仓库的 Releases 页面
+      - name: Publish to Releases
+        uses: softprops/action-gh-release@v2
         with:
-          name: android_tv
-          path: |
-            simple_live_tv_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-            simple_live_tv_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-            simple_live_tv_app/build/app/outputs/flutter-apk/app-x86_64-release.apk
+          tag_name: v1.0.0
+          name: "Simple Live 手机版 & TV版安装包"
+          body: |
+            自动编译完成，无需解压，直接点击下方对应文件即可下载安装：
+            * **手机端安装**：`SimpleLive-Mobile-arm64-v8a.apk`
+            * **电视端安装（64位）**：`SimpleLive-TV-arm64-v8a.apk`
+            * **电视端安装（32位通用/老电视）**：`SimpleLive-TV-armeabi-v7a.apk`
+          files: |
+            ${{ runner.temp }}/SimpleLive-Mobile-arm64-v8a.apk
+            ${{ runner.temp }}/SimpleLive-Mobile-armeabi-v7a.apk
+            ${{ runner.temp }}/SimpleLive-TV-arm64-v8a.apk
+            ${{ runner.temp }}/SimpleLive-TV-armeabi-v7a.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
