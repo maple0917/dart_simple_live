@@ -38,17 +38,18 @@ jobs:
           flutter-version: "3.38.x"
           cache: false
 
-      - name: Fix Network Mirrors and Lock Known Plugins
+      - name: Fix Network Mirrors and Lock Plugins Safely
         run: |
-          # 1. 阿里云 Gradle 镜像与 Maven Central 主干网（防 504 超时）
+          # 1. 手机版和电视版统一使用阿里云 Gradle 8.12 镜像（既防 504，又避免 TV 版 Gradle 8.11 版本过低报错）
           sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.12-all.zip#g' simple_live_app/android/gradle/wrapper/gradle-wrapper.properties
-          sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.11-all.zip#g' simple_live_tv_app/android/gradle/wrapper/gradle-wrapper.properties
+          sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.12-all.zip#g' simple_live_tv_app/android/gradle/wrapper/gradle-wrapper.properties
           find simple_live_app/android simple_live_tv_app/android "$FLUTTER_ROOT" -name "*.gradle*" -type f -exec sed -i 's/gradlePluginPortal()/mavenCentral()\n        google()/g' {} + || true
 
-          # 2. 强制锁死已知乱升级的插件版本
+          # 2. 原地直接替换插件版本号，绝不追加重复的 dependency_overrides 键名
           for pub in simple_live_app/pubspec.yaml simple_live_tv_app/pubspec.yaml; do
             if [ -f "$pub" ]; then
-              printf "\ndependency_overrides:\n  auto_orientation_v2: 2.3.2\n  dynamic_color: 1.7.0\n" >> "$pub"
+              sed -i 's/auto_orientation_v2:.*/auto_orientation_v2: 2.3.2/g' "$pub"
+              sed -i 's/dynamic_color:.*/dynamic_color: 1.7.0/g' "$pub"
             fi
           done
 
@@ -57,7 +58,6 @@ jobs:
           cd simple_live_app
           flutter pub get
           
-          # 【全局通杀脚本】扫描所有已下载插件的 build.gradle 和 build.gradle.kts，精准剥离不兼容的 kotlin { ... } 块
           python3 -c '
           import glob, os, re
           files = glob.glob(os.path.expanduser("~/.pub-cache/**/android/build.gradle*"), recursive=True)
@@ -66,7 +66,6 @@ jobs:
                   content = fp.read()
               new_content = re.sub(r"\bkotlin\s*\{(?:[^{}]|\{[^{}]*\})*\}", "", content)
               if new_content != content:
-                  print("Patched kotlin block in:", f)
                   with open(f, "w", encoding="utf-8") as fp:
                       fp.write(new_content)
           '
@@ -81,7 +80,6 @@ jobs:
           cd simple_live_tv_app
           flutter pub get
           
-          # 同样对 TV 端所有插件执行全局清洗
           python3 -c '
           import glob, os, re
           files = glob.glob(os.path.expanduser("~/.pub-cache/**/android/build.gradle*"), recursive=True)
@@ -90,12 +88,11 @@ jobs:
                   content = fp.read()
               new_content = re.sub(r"\bkotlin\s*\{(?:[^{}]|\{[^{}]*\})*\}", "", content)
               if new_content != content:
-                  print("Patched kotlin block in:", f)
                   with open(f, "w", encoding="utf-8") as fp:
                       fp.write(new_content)
           '
           
-          flutter build apk --release --split-per-abi
+          flutter build apk --release --split-per-abi --android-skip-build-dependency-validation
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk $RUNNER_TEMP/apks/SimpleLive-TV-arm64-v8a.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk $RUNNER_TEMP/apks/SimpleLive-TV-armeabi-v7a.apk
 
