@@ -38,30 +38,18 @@ jobs:
           flutter-version: "3.38.x"
           cache: false
 
-      - name: Network Mirrors and AGP 8 Namespace Fix
+      - name: Fix Network Mirrors and Lock Plugin Version
         run: |
-          # 1. 将 Gradle 下载源更换为镜像源，避免网络超时
+          # 1. 保持已验证成功的阿里云 Gradle 镜像与 Maven Central 源（已验证不会 504）
           sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.12-all.zip#g' simple_live_app/android/gradle/wrapper/gradle-wrapper.properties
           sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.11-all.zip#g' simple_live_tv_app/android/gradle/wrapper/gradle-wrapper.properties
-          
-          # 2. 替换可能引起重定向的仓库源
           find simple_live_app/android simple_live_tv_app/android "$FLUTTER_ROOT" -name "*.gradle*" -type f -exec sed -i 's/gradlePluginPortal()/mavenCentral()\n        google()/g' {} + || true
 
-          # 3. 【核心根治】向手机端与TV端的 android/build.gradle 注入 AGP 8 全局命名空间自动补全脚本，彻底解决老旧插件 NullPointerException
-          for build_file in simple_live_app/android/build.gradle simple_live_tv_app/android/build.gradle; do
-            if [ -f "$build_file" ]; then
-              echo "" >> "$build_file"
-              echo "subprojects {" >> "$build_file"
-              echo "    afterEvaluate { project ->" >> "$build_file"
-              echo "        if (project.hasProperty('android')) {" >> "$build_file"
-              echo "            project.android {" >> "$build_file"
-              echo "                if (namespace == null) {" >> "$build_file"
-              echo "                    namespace project.group" >> "$build_file"
-              echo "                }" >> "$build_file"
-              echo "            }" >> "$build_file"
-              echo "        }" >> "$build_file"
-              echo "    }" >> "$build_file"
-              echo "}" >> "$build_file"
+          # 2. 【核心根治】直接在 pubspec.yaml 中强制锁死 auto_orientation_v2 为正常的 2.3.2 版本，严禁下载坏掉的 2.4.0 版本
+          for pub in simple_live_app/pubspec.yaml simple_live_tv_app/pubspec.yaml; do
+            if [ -f "$pub" ]; then
+              sed -i 's/auto_orientation_v2:.*/auto_orientation_v2: 2.3.2/g' "$pub"
+              printf "\ndependency_overrides:\n  auto_orientation_v2: 2.3.2\n" >> "$pub"
             fi
           done
 
