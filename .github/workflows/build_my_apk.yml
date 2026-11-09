@@ -38,14 +38,12 @@ jobs:
           flutter-version: "3.38.x"
           cache: false
 
-      - name: Fix Network Mirrors and Lock Plugins Safely
+      - name: Fix Mirrors and Lock Plugins
         run: |
-          # 1. 手机版和电视版统一使用阿里云 Gradle 8.12 镜像（既防 504，又避免 TV 版 Gradle 8.11 版本过低报错）
           sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.12-all.zip#g' simple_live_app/android/gradle/wrapper/gradle-wrapper.properties
           sed -i 's#distributionUrl=.*#distributionUrl=https\\://mirrors.aliyun.com/macports/distfiles/gradle/gradle-8.12-all.zip#g' simple_live_tv_app/android/gradle/wrapper/gradle-wrapper.properties
           find simple_live_app/android simple_live_tv_app/android "$FLUTTER_ROOT" -name "*.gradle*" -type f -exec sed -i 's/gradlePluginPortal()/mavenCentral()\n        google()/g' {} + || true
 
-          # 2. 原地直接替换插件版本号，绝不追加重复的 dependency_overrides 键名
           for pub in simple_live_app/pubspec.yaml simple_live_tv_app/pubspec.yaml; do
             if [ -f "$pub" ]; then
               sed -i 's/auto_orientation_v2:.*/auto_orientation_v2: 2.3.2/g' "$pub"
@@ -63,11 +61,14 @@ jobs:
           files = glob.glob(os.path.expanduser("~/.pub-cache/**/android/build.gradle*"), recursive=True)
           for f in files:
               with open(f, "r", encoding="utf-8") as fp:
-                  content = fp.read()
-              new_content = re.sub(r"\bkotlin\s*\{(?:[^{}]|\{[^{}]*\})*\}", "", content)
-              if new_content != content:
+                  c = fp.read()
+              # 1. 剥离不兼容的 kotlin {} 块
+              nc = re.sub(r"\bkotlin\s*\{(?:[^{}]|\{[^{}]*\})*\}", "", c)
+              # 2. 将 media_kit 等插件中硬编码的 github.com/media-kit 替换为 ghfast 镜像并注入重试
+              nc = nc.replace("https://github.com/media-kit/", "https://ghfast.top/https://github.com/media-kit/")
+              if nc != c:
                   with open(f, "w", encoding="utf-8") as fp:
-                      fp.write(new_content)
+                      fp.write(nc)
           '
           
           flutter build apk --release --split-per-abi
@@ -85,11 +86,12 @@ jobs:
           files = glob.glob(os.path.expanduser("~/.pub-cache/**/android/build.gradle*"), recursive=True)
           for f in files:
               with open(f, "r", encoding="utf-8") as fp:
-                  content = fp.read()
-              new_content = re.sub(r"\bkotlin\s*\{(?:[^{}]|\{[^{}]*\})*\}", "", content)
-              if new_content != content:
+                  c = fp.read()
+              nc = re.sub(r"\bkotlin\s*\{(?:[^{}]|\{[^{}]*\})*\}", "", c)
+              nc = nc.replace("https://github.com/media-kit/", "https://ghfast.top/https://github.com/media-kit/")
+              if nc != c:
                   with open(f, "w", encoding="utf-8") as fp:
-                      fp.write(new_content)
+                      fp.write(nc)
           '
           
           flutter build apk --release --split-per-abi --android-skip-build-dependency-validation
