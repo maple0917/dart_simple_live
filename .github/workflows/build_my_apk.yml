@@ -16,6 +16,17 @@ jobs:
         with:
           ref: master
 
+      - name: Extract Version from pubspec.yaml
+        run: |
+          # 自动抓取 simple_live_app/pubspec.yaml 中的 version 字段（例如 version: 1.13.0+1 提取出 1.13.0）
+          RAW_VERSION=$(grep '^version: ' simple_live_app/pubspec.yaml | head -n 1 | awk '{print $2}')
+          VERSION_NAME=$(echo "$RAW_VERSION" | cut -d'+' -f1)
+          
+          # 设置环境变量供后续步骤使用
+          echo "APP_VERSION=v$VERSION_NAME" >> $GITHUB_ENV
+          echo "RAW_VERSION=$RAW_VERSION" >> $GITHUB_ENV
+          echo "Successfully extracted version: v$VERSION_NAME (Raw: $RAW_VERSION)"
+
       - name: Create Keystore and key.properties
         run: |
           keytool -genkey -v -keystore $RUNNER_TEMP/keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias key -storepass 123456 -keypass 123456 -dname "CN=SL,OU=Dev,O=Dev,L=CN,S=CN,C=CN"
@@ -56,7 +67,6 @@ jobs:
           cd simple_live_app
           flutter pub get
           
-          # 1. 彻底清理不兼容的 kotlin {} 块
           python3 -c '
           import glob, os, re
           files = glob.glob(os.path.expanduser("~/.pub-cache/**/android/build.gradle*"), recursive=True)
@@ -69,7 +79,6 @@ jobs:
                       fp.write(nc)
           '
           
-          # 2. 预先通过直连镜像将 media_kit 依赖的 jar 包下载并塞进缓存，彻底绕过联网下载
           mkdir -p ~/.pub-cache/hosted/pub.dev/media_kit_libs_android_video-1.1.7/android/.gradle/lib/
           curl -L -o ~/.pub-cache/hosted/pub.dev/media_kit_libs_android_video-1.1.7/android/.gradle/lib/default-arm64-v8a.jar "https://github.com/media-kit/libmpv-android-video-build/releases/download/v1.1.7/default-arm64-v8a.jar" || true
           curl -L -o ~/.pub-cache/hosted/pub.dev/media_kit_libs_android_video-1.1.7/android/.gradle/lib/default-armeabi-v7a.jar "https://github.com/media-kit/libmpv-android-video-build/releases/download/v1.1.7/default-armeabi-v7a.jar" || true
@@ -107,9 +116,10 @@ jobs:
       - name: Publish to Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: "Simple Live 手机版 & TV版安装包"
+          tag_name: ${{ env.APP_VERSION }}
+          name: "Simple Live 手机版 & TV版安装包 (${{ env.APP_VERSION }})"
           body: |
+            当前版本号：`${{ env.APP_VERSION }}`
             自动编译完成，直接点击下方对应文件即可下载安装：
             * **手机端安装**：`SimpleLive-Mobile-arm64-v8a.apk`
             * **电视端安装（64位）**：`SimpleLive-TV-arm64-v8a.apk`
